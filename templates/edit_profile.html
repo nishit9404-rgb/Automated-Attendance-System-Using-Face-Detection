@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <section class="card">
+    <h1>✏️ Edit Profile</h1>
+    
+    <div style="max-width: 500px;">
+      <form method="POST" action="{{ url_for('edit_profile') }}" class="form">
+        <div style="margin-bottom: 20px;">
+          <label for="username" style="display: block; margin-bottom: 8px; font-weight: bold; color: #333;">
+            Username (Read-Only)
+          </label>
+          <input type="text" id="username" value="{{ user.username }}" disabled style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; background-color: #f5f5f5; color: #999; box-sizing: border-box;" />
+          <p style="font-size: 12px; color: #999; margin: 5px 0 0 0;">Your username cannot be changed</p>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+          <label for="display_name" style="display: block; margin-bottom: 8px; font-weight: bold; color: #333;">
+            Display Name
+          </label>
+          <input type="text" id="display_name" name="display_name" value="{{ user.get('display_name', user.username) }}" required style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; font-size: 16px;" placeholder="Enter your display name" />
+          <p style="font-size: 12px; color: #666; margin: 5px 0 0 0;">This is how your name appears in the system and attendance records</p>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+          <label for="role" style="display: block; margin-bottom: 8px; font-weight: bold; color: #333;">
+            Role (Read-Only)
+          </label>
+          <input type="text" id="role" value="{{ user.role.upper() }}" disabled style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; background-color: #f5f5f5; color: #999; box-sizing: border-box;" />
+          <p style="font-size: 12px; color: #999; margin: 5px 0 0 0;">Your role cannot be changed</p>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-top: 30px;">
+          <button type="submit" class="btn primary" style="background-color: #4CAF50; flex: 1; padding: 12px;">
+            💾 Save Changes
+          </button>
+          <a href="{{ url_for('profile') }}" class="btn" style="flex: 1; padding: 12px; text-align: center; text-decoration: none; display: flex; align-items: center; justify-content: center;">
+            ❌ Cancel
+          </a>
+        </div>
+      </form>
+    </div>
+
+    <div style="background-color: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid #ff9800; margin-top: 30px;">
+      <p style="margin: 0; font-size: 14px; color: #856404;">
+        ⚠️ Only your display name can be edited. To change your password, use the "Change Password" option.
+      </p>
+    </div>
+  </section>
+{% endblock %}

@@ -1,0 +1,438 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <section class="grid">
+    <div class="card">
+      <h2>Filters</h2>
+      <form method="get" class="form">
+        <label>
+          Student
+          <select name="name">
+            <option value="">All</option>
+            {% for name in unique_names %}
+              <option value="{{ name }}" {% if name_filter == name %}selected{% endif %}>{{ name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          Subject
+          <select name="subject">
+            <option value="">All</option>
+            {% for subject in unique_subjects %}
+              <option value="{{ subject }}" {% if subject_filter == subject %}selected{% endif %}>{{ subject }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          Date
+          <select name="date">
+            <option value="">All</option>
+            {% for date in unique_dates %}
+              <option value="{{ date }}" {% if date_filter == date %}selected{% endif %}>{{ date }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button class="btn" type="submit">Apply</button>
+        <button class="btn" type="button" onclick="location.reload()">Refresh</button>
+        <a class="btn" href="{{ url_for('download_attendance') }}">Download CSV</a>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Set Active Subject</h2>
+      <p class="hint">Select the subject for students to mark attendance</p>
+      <div style="display: flex; gap: 8px; align-items: flex-end;">
+        <label style="flex: 1;">
+          Active Subject:
+          <select id="activeSubjectSelector" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+            <option value="MOOC">MOOC</option>
+            <option value="Fullstack">Fullstack</option>
+            <option value="Capstone">Capstone</option>
+            <option value="blockChain">blockChain</option>
+            <option value="Data warehouse">Data warehouse</option>
+            <option value="Image Processing">Image Processing</option>
+            <option value="AML">AML</option>
+          </select>
+        </label>
+        <button class="btn primary" type="button" id="setActiveSubjectBtn">Set</button>
+      </div>
+      <p id="activeSubjectStatus" class="hint" style="margin-top: 10px; color: #666;"></p>
+    </div>
+
+    <div class="card">
+      <h2>Train Face Model</h2>
+      <p class="hint">After students register faces, train the model to enable attendance marking</p>
+      <button class="btn primary" type="button" id="trainModelBtn" style="width: 100%;">Train Model Now</button>
+      <p id="trainModelStatus" class="hint" style="margin-top: 10px; color: #666;"></p>
+    </div>
+
+    <div class="card">
+      <h2>Face Registration Status</h2>
+      <p class="hint">Check which students have registered faces</p>
+      <button class="btn" type="button" id="checkFaceStatusBtn" style="width: 100%;">Check Status</button>
+      <div id="faceStatusContent" style="margin-top: 15px;"></div>
+    </div>
+
+    <div class="card">
+      <h2>Add Student</h2>
+      <form method="post" action="{{ url_for('add_student') }}" class="form">
+        <label>
+          Username
+          <input type="text" name="username" required />
+        </label>
+        <label>
+          Password
+          <input type="password" name="password" required />
+        </label>
+        <button class="btn primary" type="submit">Create student</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Upload Faces</h2>
+      <form method="post" action="{{ url_for('upload_faces') }}" enctype="multipart/form-data" class="form">
+        <label>
+          Student
+          <input type="text" name="username" required />
+        </label>
+        <label>
+          Photos
+          <input type="file" name="photos" accept="image/*" multiple required />
+        </label>
+        <button class="btn primary" type="submit">Upload</button>
+      </form>
+      <p class="hint">Upload clear, front-facing photos in good light.</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Attendance Overview by Subject</h2>
+    <div style="margin-bottom: 20px;">
+      <label style="display: flex; gap: 8px; align-items: center;">
+        Subject Filter for Graph:
+        <select id="subjectSelect" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+          <option value="">All Subjects</option>
+          {% for subject in unique_subjects %}
+            <option value="{{ subject }}">{{ subject }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div style="position: relative; height: 400px; margin-bottom: 30px;">
+      <canvas id="subjectChart"></canvas>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Student Attendance Summary</h2>
+    <div style="position: relative; height: 400px; margin-bottom: 30px;">
+      <canvas id="studentChart"></canvas>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Attendance Records</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Date</th>
+            <th>Time</th>
+            <th>Subject</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.name }}</td>
+              <td>{{ row.date }}</td>
+              <td>{{ row.time }}</td>
+              <td>{{ row.get('subject', 'General') }}</td>
+            </tr>
+          {% endfor %}
+          {% if rows|length == 0 %}
+            <tr>
+              <td colspan="4" class="empty">No attendance records.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <script>
+    let subjectChart = null;
+    let studentChart = null;
+    let teacherDashboardVersionKey = '';
+
+    const buildVersionKey = (version) => {
+      if (!version) return '0|';
+      return `${version.count || 0}|${version.last || ''}`;
+    };
+
+    const fetchDashboardVersionKey = async () => {
+      try {
+        const response = await fetch('/api/dashboard-version');
+        const data = await response.json();
+        if (!data.ok) return null;
+        const attendanceKey = buildVersionKey(data.attendance);
+        const faceKey = `${data.faces?.total_images || 0}|${data.faces?.latest_mtime || 0}`;
+        return `${attendanceKey}::${faceKey}`;
+      } catch (error) {
+        console.error('Error fetching dashboard version:', error);
+        return null;
+      }
+    };
+
+    const startTeacherAutoRefresh = async () => {
+      teacherDashboardVersionKey = (await fetchDashboardVersionKey()) || '0|::0|0';
+
+      setInterval(async () => {
+        const latestKey = await fetchDashboardVersionKey();
+        if (!latestKey) return;
+        if (latestKey !== teacherDashboardVersionKey) {
+          location.reload();
+        }
+      }, 5000);
+    };
+
+    window.addEventListener('storage', (event) => {
+      if (event.key !== 'dashboardLastUpdate' || !event.newValue) return;
+      location.reload();
+    });
+
+    const loadSubjectChart = async (subject = '') => {
+      try {
+        const url = subject ? `/api/subject-stats/${encodeURIComponent(subject)}` : '/api/subject-stats/General';
+        
+        // If subject is empty, get all subjects and aggregate
+        if (!subject) {
+          const subjectsRes = await fetch('/api/all-subjects');
+          const subjectsData = await subjectsRes.json();
+          if (subjectsData.ok && subjectsData.subjects.length > 0) {
+            return loadSubjectChart(subjectsData.subjects[0]);
+          }
+        }
+
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        if (!data.ok) return;
+
+        const ctx = document.getElementById('subjectChart').getContext('2d');
+        
+        if (subjectChart) subjectChart.destroy();
+        
+        subjectChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: data.names,
+            datasets: [{
+              label: `Attendance in ${data.subject}`,
+              data: data.counts,
+              backgroundColor: 'rgba(75, 192, 192, 0.5)',
+              borderColor: 'rgba(75, 192, 192, 1)',
+              borderWidth: 1,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              title: {
+                display: true,
+                text: `Attendance Count by Student - ${data.subject}`
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: { stepSize: 1 }
+              }
+            }
+          }
+        });
+      } catch (error) {
+        console.error('Error loading subject chart:', error);
+      }
+    };
+
+    const loadStudentChart = async () => {
+      try {
+        const rows = {{ rows|tojson }};
+        
+        // Count attendance by student
+        const studentStats = {};
+        rows.forEach(row => {
+          if (!studentStats[row.name]) {
+            studentStats[row.name] = 0;
+          }
+          studentStats[row.name] += 1;
+        });
+
+        const names = Object.keys(studentStats).sort();
+        const counts = names.map(name => studentStats[name]);
+
+        const ctx = document.getElementById('studentChart').getContext('2d');
+        
+        if (studentChart) studentChart.destroy();
+        
+        studentChart = new Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            labels: names,
+            datasets: [{
+              data: counts,
+              backgroundColor: [
+                'rgba(255, 99, 132, 0.5)',
+                'rgba(54, 162, 235, 0.5)',
+                'rgba(255, 206, 86, 0.5)',
+                'rgba(75, 192, 192, 0.5)',
+                'rgba(153, 102, 255, 0.5)',
+                'rgba(255, 159, 64, 0.5)',
+              ],
+              borderColor: [
+                'rgba(255, 99, 132, 1)',
+                'rgba(54, 162, 235, 1)',
+                'rgba(255, 206, 86, 1)',
+                'rgba(75, 192, 192, 1)',
+                'rgba(153, 102, 255, 1)',
+                'rgba(255, 159, 64, 1)',
+              ],
+              borderWidth: 1,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              title: {
+                display: true,
+                text: 'Total Attendance by Student'
+              }
+            }
+          }
+        });
+      } catch (error) {
+        console.error('Error loading student chart:', error);
+      }
+    };
+
+    document.getElementById('subjectSelect').addEventListener('change', (e) => {
+      loadSubjectChart(e.target.value);
+    });
+
+    const loadActiveSubject = async () => {
+      try {
+        const response = await fetch('/api/active-subject');
+        const data = await response.json();
+        if (data.ok) {
+          document.getElementById('activeSubjectSelector').value = data.subject;
+          document.getElementById('activeSubjectStatus').textContent = `Current active subject: ${data.subject}`;
+        }
+      } catch (error) {
+        console.error('Error loading active subject:', error);
+      }
+    };
+
+    document.getElementById('setActiveSubjectBtn').addEventListener('click', async () => {
+      const subject = document.getElementById('activeSubjectSelector').value;
+      const statusEl = document.getElementById('activeSubjectStatus');
+      
+      try {
+        const response = await fetch('/api/set-active-subject', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subject })
+        });
+        const data = await response.json();
+        
+        if (data.ok) {
+          statusEl.textContent = `✓ Active subject changed to: ${data.subject}`;
+          statusEl.style.color = '#4CAF50';
+        } else {
+          statusEl.textContent = `✗ Error: ${data.error}`;
+          statusEl.style.color = '#d32f2f';
+        }
+      } catch (error) {
+        console.error('Error setting active subject:', error);
+        statusEl.textContent = 'Error setting subject';
+        statusEl.style.color = '#d32f2f';
+      }
+    });
+
+    document.getElementById('trainModelBtn').addEventListener('click', async () => {
+      const statusEl = document.getElementById('trainModelStatus');
+      const btn = document.getElementById('trainModelBtn');
+      
+      btn.disabled = true;
+      btn.textContent = 'Training...';
+      statusEl.textContent = 'Training model, please wait...';
+      statusEl.style.color = '#666';
+      
+      try {
+        const response = await fetch('/api/train-model', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json();
+        
+        if (data.ok) {
+          statusEl.textContent = `✓ ${data.message}`;
+          statusEl.style.color = '#4CAF50';
+        } else {
+          statusEl.textContent = `✗ ${data.error}`;
+          statusEl.style.color = '#d32f2f';
+        }
+      } catch (error) {
+        console.error('Error training model:', error);
+        statusEl.textContent = 'Error training model';
+        statusEl.style.color = '#d32f2f';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Train Model Now';
+      }
+    });
+
+    document.getElementById('checkFaceStatusBtn').addEventListener('click', async () => {
+      const contentEl = document.getElementById('faceStatusContent');
+      
+      try {
+        const response = await fetch('/api/face-registration-status');
+        const data = await response.json();
+        
+        if (!data.ok) {
+          contentEl.innerHTML = '<p style="color: #d32f2f;">Error fetching status</p>';
+          return;
+        }
+
+        if (data.total_students === 0) {
+          contentEl.innerHTML = '<p style="color: #ff9800;">No students have registered faces yet.</p>';
+          return;
+        }
+
+        let html = `<p style="color: #4CAF50; font-weight: bold;">${data.total_students} students registered • ${data.total_images} total images</p>`;
+        html += '<table style="width: 100%; border-collapse: collapse; margin-top: 10px;"><thead><tr><th style="border-bottom: 2px solid #ddd; padding: 8px; text-align: left;">Student</th><th style="border-bottom: 2px solid #ddd; padding: 8px; text-align: right;">Images</th></tr></thead><tbody>';
+        
+        for (const [student, imageCount] of Object.entries(data.students).sort()) {
+          html += `<tr><td style="border-bottom: 1px solid #eee; padding: 8px;">${student}</td><td style="border-bottom: 1px solid #eee; padding: 8px; text-align: right;">${imageCount}</td></tr>`;
+        }
+        
+        html += '</tbody></table>';
+        contentEl.innerHTML = html;
+      } catch (error) {
+        console.error('Error checking face status:', error);
+        contentEl.innerHTML = '<p style="color: #d32f2f;">Error checking status</p>';
+      }
+    });
+
+    // Load charts and active subject on page load
+    document.addEventListener('DOMContentLoaded', () => {
+      loadStudentChart();
+      loadSubjectChart();
+      loadActiveSubject();
+      startTeacherAutoRefresh();
+    });
+  </script>
+{% endblock %}

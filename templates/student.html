@@ -1,0 +1,389 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <section class="card">
+    <h1>Welcome, {{ username }}</h1>
+    <div class="name-section">
+      <p class="hint">Display Name: <strong>{{ display_name }}</strong></p>
+      <form method="post" action="{{ url_for('student_set_name') }}" class="form" style="max-width: 300px; display: grid; gap: 8px; grid-template-columns: 1fr auto;">
+        <input type="text" name="display_name" placeholder="Enter your name" value="{{ display_name }}" required />
+        <button class="btn primary" type="submit">Update Name</button>
+      </form>
+    </div>
+    <div class="camera">
+      <video id="cameraVideo" autoplay playsinline></video>
+      <canvas id="cameraCanvas" width="640" height="480"></canvas>
+    </div>
+    <div class="actions">
+      <button class="btn" type="button" id="toggleCamera" style="background-color: #2196F3; color: white; font-weight: bold;">📷 Turn On Camera</button>
+      <button class="btn primary" type="button" id="registerFace">Register Face (5)</button>
+      <button class="btn primary" type="button" id="markAttendance" style="background-color: #4CAF50;">Mark Attendance</button>
+    </div>
+    <p class="hint" id="cameraStatus">Camera is off.</p>
+  </section>
+
+  <section class="card">
+    <h2>Current Active Subject</h2>
+    <div style="margin-bottom: 20px; padding: 15px; background-color: #f0f8ff; border-radius: 4px; border-left: 4px solid #4CAF50;">
+      <p style="margin: 0; font-size: 18px; font-weight: bold;">
+        Subject: <span id="activeSubjectDisplay" style="color: #4CAF50;">Loading...</span>
+      </p>
+      <p style="margin: 5px 0 0 0; font-size: 14px; color: #666;">Mark attendance only for this subject</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Your Attendance by Subject</h2>
+    <div style="position: relative; height: 400px; margin-bottom: 30px;">
+      <canvas id="attendanceChart"></canvas>
+    </div>
+    
+    <!-- Live Statistics Section -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 20px;">
+      <div style="padding: 15px; background-color: #e3f2fd; border-radius: 4px; border-left: 4px solid #2196F3;">
+        <p style="margin: 0; font-size: 12px; color: #666; text-transform: uppercase;">Total Attendance</p>
+        <p style="margin: 5px 0 0 0; font-size: 28px; font-weight: bold; color: #2196F3;" id="totalAttendance">0</p>
+      </div>
+      <div style="padding: 15px; background-color: #f3e5f5; border-radius: 4px; border-left: 4px solid #9c27b0;">
+        <p style="margin: 0; font-size: 12px; color: #666; text-transform: uppercase;">Subjects Attended</p>
+        <p style="margin: 5px 0 0 0; font-size: 28px; font-weight: bold; color: #9c27b0;" id="subjectsAttended">0</p>
+      </div>
+      <div style="padding: 15px; background-color: #e8f5e9; border-radius: 4px; border-left: 4px solid #4CAF50;">
+        <p style="margin: 0; font-size: 12px; color: #666; text-transform: uppercase;">Most Attended</p>
+        <p style="margin: 5px 0 0 0; font-size: 18px; font-weight: bold; color: #4CAF50;" id="mostAttended">—</p>
+      </div>
+    </div>
+
+    <!-- Detailed Breakdown -->
+    <div style="margin-top: 20px; padding: 15px; background-color: #fafafa; border-radius: 4px;">
+      <p style="margin: 0 0 10px 0; font-size: 14px; font-weight: bold; color: #333;">Subject Breakdown</p>
+      <div id="subjectBreakdown" style="display: grid; gap: 8px;">
+        <p style="margin: 0; color: #999; font-size: 12px;">Loading...</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Attendance Records</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Time</th>
+            <th>Subject</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.date }}</td>
+              <td>{{ row.time }}</td>
+              <td>{{ row.get('subject', 'General') }}</td>
+            </tr>
+          {% endfor %}
+          {% if rows|length == 0 %}
+            <tr>
+              <td colspan="3" class="empty">No attendance records.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <script>
+    const video = document.getElementById('cameraVideo');
+    const canvas = document.getElementById('cameraCanvas');
+    const statusEl = document.getElementById('cameraStatus');
+    const toggleBtn = document.getElementById('toggleCamera');
+    const registerBtn = document.getElementById('registerFace');
+    const attendBtn = document.getElementById('markAttendance');
+    const activeSubjectDisplay = document.getElementById('activeSubjectDisplay');
+    let stream = null;
+    let attendanceChart = null;
+    let activeSubject = 'MOOC'; // Default subject
+    let cameraOn = false;
+
+    const setStatus = (text) => {
+      statusEl.textContent = text;
+    };
+
+    const updateCameraButtonState = () => {
+      if (cameraOn) {
+        toggleBtn.textContent = '📷 Turn Off Camera';
+        toggleBtn.style.backgroundColor = '#d32f2f';
+      } else {
+        toggleBtn.textContent = '📷 Turn On Camera';
+        toggleBtn.style.backgroundColor = '#2196F3';
+      }
+    };
+
+    const loadActiveSubject = async () => {
+      try {
+        const response = await fetch('/api/active-subject');
+        const data = await response.json();
+        if (data.ok) {
+          activeSubject = data.subject;
+          activeSubjectDisplay.textContent = activeSubject;
+        }
+      } catch (error) {
+        console.error('Error loading active subject:', error);
+      }
+    };
+
+    const startCamera = async () => {
+      if (stream) return;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        setStatus('Camera is on.');
+        cameraOn = true;
+        updateCameraButtonState();
+      } catch (err) {
+        setStatus('Unable to access camera.');
+      }
+    };
+
+    const stopCamera = () => {
+      if (stream) {
+        stream.getTracks().forEach(track => {
+          track.stop();
+        });
+        stream = null;
+        video.srcObject = null;
+        setStatus('Camera is off.');
+        cameraOn = false;
+        updateCameraButtonState();
+      }
+    };
+
+    const toggleCamera = async () => {
+      if (cameraOn) {
+        stopCamera();
+      } else {
+        await startCamera();
+      }
+    };
+
+    const captureFrame = () => {
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/jpeg', 0.9);
+    };
+
+    const postJson = async (url, payload) => {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      return response.json().catch(() => ({}));
+    };
+
+    const publishDashboardRefresh = (reason, version = null) => {
+      localStorage.setItem('dashboardLastUpdate', JSON.stringify({
+        at: Date.now(),
+        reason,
+        version,
+      }));
+    };
+
+    toggleBtn.addEventListener('click', toggleCamera);
+
+    registerBtn.addEventListener('click', async () => {
+      if (!cameraOn) {
+        await startCamera();
+      }
+      setStatus('Capturing 5 images...');
+      const images = [];
+      for (let i = 0; i < 5; i += 1) {
+        images.push(captureFrame());
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+      const result = await postJson('{{ url_for("student_register_face_browser") }}', { images });
+      if (result.ok) {
+        setStatus(`Saved ${result.saved} image(s). You can now mark attendance.`);
+        publishDashboardRefresh('face-registration');
+      } else {
+        setStatus(result.error || 'Registration failed.');
+      }
+    });
+
+    const updateAttendanceTable = async () => {
+      const displayName = '{{ display_name }}';
+      const url = `/api/attendance/${encodeURIComponent(displayName)}`;
+      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      const json = await response.json().catch(() => ({}));
+      if (!json.ok) return;
+      const tbody = document.querySelector('table tbody');
+      tbody.innerHTML = '';
+      if (json.rows && json.rows.length > 0) {
+        json.rows.forEach((row) => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${row.date}</td><td>${row.time}</td><td>${row.subject || 'General'}</td>`;
+          tbody.appendChild(tr);
+        });
+      } else {
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td colspan="3" class="empty">No attendance records.</td>';
+        tbody.appendChild(tr);
+      }
+      loadAttendanceChart();
+    };
+
+    const updateLiveStatistics = (subjects, counts) => {
+      // Calculate total attendance
+      const totalAttendance = counts.reduce((a, b) => a + b, 0);
+      document.getElementById('totalAttendance').textContent = totalAttendance;
+      
+      // Calculate subjects attended
+      const subjectsAttended = subjects.length;
+      document.getElementById('subjectsAttended').textContent = subjectsAttended;
+      
+      // Find most attended subject
+      if (subjects.length > 0) {
+        const maxIndex = counts.indexOf(Math.max(...counts));
+        const mostAttended = subjects[maxIndex];
+        document.getElementById('mostAttended').textContent = mostAttended;
+      } else {
+        document.getElementById('mostAttended').textContent = '—';
+      }
+      
+      // Update subject breakdown
+      const breakdownDiv = document.getElementById('subjectBreakdown');
+      breakdownDiv.innerHTML = '';
+      
+      if (subjects.length === 0) {
+        breakdownDiv.innerHTML = '<p style="margin: 0; color: #999; font-size: 12px;">No attendance records yet</p>';
+      } else {
+        const totalCount = counts.reduce((a, b) => a + b, 0);
+        subjects.forEach((subject, index) => {
+          const count = counts[index];
+          const percentage = totalCount > 0 ? ((count / totalCount) * 100).toFixed(1) : 0;
+          const bar = document.createElement('div');
+          bar.style.cssText = 'display: flex; align-items: center; gap: 10px;';
+          bar.innerHTML = `
+            <span style="min-width: 120px; font-size: 13px; font-weight: 700; color: #1f2937; text-transform: capitalize;">${subject || 'General'}</span>
+            <div style="flex: 1; height: 20px; background-color: #e0e0e0; border-radius: 3px; overflow: hidden;">
+              <div style="height: 100%; background-color: #4CAF50; width: ${percentage}%; transition: width 0.3s ease;"></div>
+            </div>
+            <span style="min-width: 60px; text-align: right; font-size: 12px; font-weight: bold; color: #333;">${count} (${percentage}%)</span>
+          `;
+          breakdownDiv.appendChild(bar);
+        });
+      }
+    };
+
+    const loadAttendanceChart = async () => {
+      try {
+        const displayName = '{{ display_name }}';
+        const url = `/api/attendance-stats/${encodeURIComponent(displayName)}`;
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        if (!data.ok) return;
+
+        // Update live statistics
+        updateLiveStatistics(data.subjects, data.counts);
+
+        const ctx = document.getElementById('attendanceChart').getContext('2d');
+        
+        if (attendanceChart) attendanceChart.destroy();
+        
+        const colors = [
+          'rgba(255, 99, 132, 0.5)',
+          'rgba(54, 162, 235, 0.5)',
+          'rgba(255, 206, 86, 0.5)',
+          'rgba(75, 192, 192, 0.5)',
+          'rgba(153, 102, 255, 0.5)',
+          'rgba(255, 159, 64, 0.5)',
+          'rgba(199, 199, 199, 0.5)',
+        ];
+        
+        const borderColors = [
+          'rgba(255, 99, 132, 1)',
+          'rgba(54, 162, 235, 1)',
+          'rgba(255, 206, 86, 1)',
+          'rgba(75, 192, 192, 1)',
+          'rgba(153, 102, 255, 1)',
+          'rgba(255, 159, 64, 1)',
+          'rgba(199, 199, 199, 1)',
+        ];
+        
+        attendanceChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: data.subjects,
+            datasets: [{
+              label: 'Attendance Count',
+              data: data.counts,
+              backgroundColor: data.subjects.map((_, i) => colors[i % colors.length]),
+              borderColor: data.subjects.map((_, i) => borderColors[i % borderColors.length]),
+              borderWidth: 2,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: {
+              duration: 400,
+            },
+            plugins: {
+              legend: {
+                display: true,
+              },
+              tooltip: {
+                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                padding: 12,
+                titleFont: { size: 13, weight: 'bold' },
+                bodyFont: { size: 12 },
+                callbacks: {
+                  label: function(context) {
+                    const value = context.parsed.y;
+                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                    const percentage = ((value / total) * 100).toFixed(1);
+                    return `Attendance: ${value} (${percentage}%)`;
+                  }
+                }
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: { stepSize: 1 }
+              }
+            }
+          }
+        });
+      } catch (error) {
+        console.error('Error loading chart:', error);
+      }
+    };
+
+    attendBtn.addEventListener('click', async () => {
+      if (!cameraOn) {
+        await startCamera();
+      }
+      setStatus('Checking face...');
+      const image = captureFrame();
+      const result = await postJson('{{ url_for("student_mark_attendance_browser") }}', { image, subject: activeSubject });
+      if (result.ok) {
+        setStatus(`✓ Attendance marked for ${result.name} in ${activeSubject}!`);
+        await updateAttendanceTable();
+
+        // Notify other open tabs (for example teacher dashboard) that attendance changed.
+        const versionPayload = result.version || { count: Date.now(), last: `${activeSubject}` };
+        publishDashboardRefresh('attendance', versionPayload);
+      } else {
+        setStatus(result.error || 'Attendance failed.');
+      }
+    });
+
+    // Load chart and active subject on page load
+    document.addEventListener('DOMContentLoaded', () => {
+      loadActiveSubject();
+      loadAttendanceChart();
+    });
+  </script>
+{% endblock %}
